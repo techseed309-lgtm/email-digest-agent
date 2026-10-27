@@ -24,6 +24,7 @@ Built for the Signal & Byte video *Email Sorting & Digesting Agent: 4 Hours to 6
 
 ## Set it up (free, on your own computer)
 1. **Start n8n.** Install Node.js 24, then run `npx n8n` (or `npm install -g n8n` and `n8n start`).
+   With Docker instead: `docker run -it --rm --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n docker.n8n.io/n8nio/n8n`
    Open http://localhost:5678 and create your local n8n login.
 2. **Gmail app password.** In your Google Account turn on 2-Step Verification, then go to
    https://myaccount.google.com/apppasswords, create one (name it `n8n`) and keep the 16 characters handy.
@@ -62,7 +63,8 @@ python demo/load_demo_mail.py --remove   # moves the demo emails to Trash again
   runs once, in a few large batches, so it stays within the AI's limits and sends exactly one digest.
 - **The AI step** is a Basic LLM Chain with the Google Gemini Chat Model (`models/gemini-3.5-flash-lite`) and a
   Structured Output Parser, so every answer comes back as the same JSON (category, priority, summary,
-  suggested reply). Prompt and schema: [prompt.md](prompt.md).
+  suggested reply). Prompt and schema: [prompt.md](prompt.md). To change the categories, edit the list in the prompt,
+  in the output format, and in the *Build digest* node.
 - **Batch size:** 75 emails per request, so ~300 emails is 4 requests. Gemini's free tier limits requests **per day,
   per model**; check yours in AI Studio and change the batch size in *Prepare batches* if you need fewer requests.
 
@@ -88,8 +90,9 @@ python demo/load_demo_mail.py --remove   # moves the demo emails to Trash again
   maintenance services". What it does not allow without a commercial licence is hosting n8n as a service where your
   clients build or edit workflows themselves. The simplest clean setup: install it on the client's own server or
   account. Read the [n8n licence FAQ](https://docs.n8n.io/n8n-community-license/community-license/license-faq) and ask license@n8n.io if unsure.
-- **As a SaaS** (customers connect their own Gmail): two real requirements. (1) A product where customers use n8n
-  through your service generally needs n8n's commercial (Embed) agreement, or you build the backend without n8n.
+- **As a SaaS** (customers connect their own Gmail): two real requirements. (1) If customers can build or change workflows through your product, you need n8n's commercial licence (the FAQ
+  calls this an embedded workflow builder); n8n running only behind the scenes is treated differently, so ask
+  license@n8n.io. Or build the backend without n8n.
   (2) Reading other people's Gmail through Google's API uses **restricted scopes**: Google app verification plus a
   yearly third-party security assessment (CASA), which takes weeks and has a fee. Budget for both before you start.
 
