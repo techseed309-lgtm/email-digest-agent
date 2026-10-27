@@ -1,0 +1,378 @@
+{
+ "name": "Inbox Agent \u00b7 2 Sort & digest",
+ "active": false,
+ "settings": {
+  "executionOrder": "v1",
+  "saveManualExecutions": true
+ },
+ "nodes": [
+  {
+   "parameters": {},
+   "name": "Run now",
+   "type": "n8n-nodes-base.manualTrigger",
+   "typeVersion": 1,
+   "position": [
+    0,
+    220
+   ],
+   "id": "run-now"
+  },
+  {
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "days",
+       "triggerAtHour": 8
+      }
+     ]
+    }
+   },
+   "name": "Every day 08:00",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    0,
+    420
+   ],
+   "id": "every-day-08:00"
+  },
+  {
+   "parameters": {
+    "resource": "row",
+    "operation": "get",
+    "dataTableId": {
+     "__rl": true,
+     "mode": "name",
+     "value": "inbox_queue"
+    },
+    "returnAll": true
+   },
+   "name": "Read queue",
+   "type": "n8n-nodes-base.dataTable",
+   "typeVersion": 1.1,
+   "position": [
+    240,
+    300
+   ],
+   "id": "read-queue"
+  },
+  {
+   "parameters": {
+    "jsCode": "// SETTINGS: edit these two lines.\nconst MY_ADDRESS = 'you@gmail.com'; // your Gmail address (the agent skips its own digest emails)\nconst DEMO_MODE = true; // true = only the demo inbox (.example senders) goes to the AI. Set false for your\n                        // own mail, and use Gemini's PAID tier for real mail (free-tier inputs may be used\n                        // to improve Google's products).\n// Everything waiting in the queue -> batches the model can read in one call.\nconst started = new Date().toISOString();\n// DEMO MODE: only seeded demo senders are sent to the model (real mail stays out of the free tier)\nconst isDemo = s => /@[^>\\s]+\\.example>?\\s*$/i.test(String(s || '').trim());\nconst mails = $input.all().filter(it => it.json.id !== undefined && (!DEMO_MODE || isDemo(it.json.sender))).map((it, i) => ({\n  n: i + 1, id: it.json.id, from: it.json.sender, subject: it.json.subject, date: it.json.received, body: it.json.body,\n}));\nconst size = 75;\nconst out = [];\nfor (let k = 0; k < mails.length; k += size) {\n  const batch = mails.slice(k, k + size);\n  out.push({ json: {\n    batchNo: out.length + 1, started, total: mails.length, batch,\n    emailsText: batch.map(m => `#${m.n} | From: ${m.from} | Subject: ${m.subject}\\n${m.body}`).join('\\n---\\n'),\n  } });\n}\nreturn out;"
+   },
+   "name": "Prepare batches",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    480,
+    300
+   ],
+   "id": "prepare-batches"
+  },
+  {
+   "parameters": {
+    "options": {}
+   },
+   "name": "Loop over batches",
+   "type": "n8n-nodes-base.splitInBatches",
+   "typeVersion": 3,
+   "position": [
+    720,
+    300
+   ],
+   "id": "loop-over-batches"
+  },
+  {
+   "parameters": {
+    "promptType": "define",
+    "text": "=You are the inbox assistant for Maya Chen, who runs Fernwood Studio, a small design studio.\nSort every email below. For each one return:\n- n: the email's number\n- category: exactly one of action_needed (Maya must reply, decide or do something), personal (friends/family),\n  receipt (payment confirmations, receipts), notification (automatic alerts and reminders), newsletter, promo (ads, sales)\n- priority: high (a deadline, money or a client waiting), medium, or low\n- summary: what it says in at most 15 words\n- suggested_reply: for action_needed and personal only, a short friendly reply Maya could send; otherwise an empty string\nUse only what the email says. Never invent facts, prices or dates.\n\nEmails:\n{{ $json.emailsText }}",
+    "hasOutputParser": true
+   },
+   "name": "Sort & summarise",
+   "type": "@n8n/n8n-nodes-langchain.chainLlm",
+   "typeVersion": 1.9,
+   "position": [
+    1000,
+    380
+   ],
+   "id": "sort-and-summarise",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 5000,
+   "onError": "continueRegularOutput"
+  },
+  {
+   "parameters": {
+    "modelName": "models/gemini-3.5-flash-lite",
+    "options": {
+     "temperature": 0.2
+    }
+   },
+   "name": "Gemini",
+   "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+   "typeVersion": 1.2,
+   "position": [
+    940,
+    600
+   ],
+   "id": "gemini",
+   "credentials": {
+    "googlePalmApi": {
+     "id": "",
+     "name": "Studio Gemini"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "schemaType": "manual",
+    "inputSchema": "{\n \"type\": \"object\",\n \"properties\": {\n  \"emails\": {\n   \"type\": \"array\",\n   \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n     \"n\": {\n      \"type\": \"integer\"\n     },\n     \"category\": {\n      \"type\": \"string\",\n      \"enum\": [\n       \"action_needed\",\n       \"personal\",\n       \"receipt\",\n       \"notification\",\n       \"newsletter\",\n       \"promo\"\n      ]\n     },\n     \"priority\": {\n      \"type\": \"string\",\n      \"enum\": [\n       \"high\",\n       \"medium\",\n       \"low\"\n      ]\n     },\n     \"summary\": {\n      \"type\": \"string\"\n     },\n     \"suggested_reply\": {\n      \"type\": \"string\"\n     }\n    },\n    \"required\": [\n     \"n\",\n     \"category\",\n     \"priority\",\n     \"summary\",\n     \"suggested_reply\"\n    ]\n   }\n  }\n },\n \"required\": [\n  \"emails\"\n ]\n}"
+   },
+   "name": "Output format",
+   "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+   "typeVersion": 1.3,
+   "position": [
+    1140,
+    600
+   ],
+   "id": "output-format"
+  },
+  {
+   "parameters": {
+    "amount": 6,
+    "unit": "seconds"
+   },
+   "name": "Pace for free tier",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    1340,
+    380
+   ],
+   "id": "pace-for-free-tier",
+   "webhookId": "pace-free-tier-v2"
+  },
+  {
+   "parameters": {
+    "jsCode": "// Join the model's answers back to the emails, write ONE digest, and list anything that wasn't sorted.\nconst prep = $('Prepare batches').all().map(i => i.json);\nconst mails = prep.flatMap(b => b.batch);\nconst byN = Object.fromEntries(mails.map(m => [m.n, m]));\nconst answers = $input.all().flatMap(i => i.json.output?.emails || []);\nconst seen = new Set();\nconst rows = [];\nfor (const a of answers) {\n  if (!byN[a.n] || seen.has(a.n)) continue;\n  seen.add(a.n);\n  rows.push({ ...byN[a.n], ...a, body: undefined });\n}\nconst missing = mails.filter(m => !seen.has(m.n)).map(m => ({ n: m.n, id: m.id, from: m.from, subject: m.subject }));\nconst started = prep[0]?.started;\nconst finished = new Date().toISOString();\nconst seconds = Math.round((new Date(finished) - new Date(started)) / 1000);\nconst count = c => rows.filter(r => r.category === c).length;\nconst esc = s => String(s || '').replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));\nconst rank = { high: 0, medium: 1, low: 2 };\nconst act = rows.filter(r => r.category === 'action_needed').sort((a, b) => rank[a.priority] - rank[b.priority]);\nconst pers = rows.filter(r => r.category === 'personal');\nconst item = r => `<tr><td style=\"padding:10px 0;border-top:1px solid #e3e8ef\">\n  <div style=\"font:600 14px Arial;color:#0f1b2d\">${esc(r.subject)} <span style=\"font-weight:400;color:#5b6b80\">\u00b7 ${esc(r.from)}</span>\n  ${r.priority === 'high' ? '<span style=\"background:#ffe8cc;color:#9a4a00;border-radius:4px;padding:1px 6px;font-size:11px;margin-left:6px\">HIGH</span>' : ''}</div>\n  <div style=\"font:14px Arial;color:#2b3a4f;margin-top:3px\">${esc(r.summary)}</div>\n  ${r.suggested_reply ? `<div style=\"font:13px Arial;color:#0b6b74;background:#eefafb;border-left:3px solid #13b5c4;padding:6px 10px;margin-top:6px\">Suggested reply: ${esc(r.suggested_reply)}</div>` : ''}\n</td></tr>`;\nconst chip = (label, n) => `<td style=\"padding:8px 12px;background:#f2f5f9;border-radius:6px;font:13px Arial;color:#2b3a4f\">${label} <b>${n}</b></td><td width=\"6\"></td>`;\nconst html = `<div style=\"max-width:640px;margin:auto;font-family:Arial\">\n<h2 style=\"font:700 22px Arial;color:#0f1b2d;margin:0 0 4px\">Your inbox, sorted</h2>\n<p style=\"font:14px Arial;color:#5b6b80;margin:0 0 14px\">${rows.length} emails read in ${Math.floor(seconds / 60)} min ${seconds % 60} s \u00b7 ${act.length} need you</p>\n<table cellspacing=\"0\"><tr>${chip('Needs you', act.length)}${chip('Personal', pers.length)}${chip('Receipts', count('receipt'))}${chip('Alerts', count('notification'))}${chip('Newsletters', count('newsletter'))}${chip('Promos', count('promo'))}</tr></table>\n${missing.length ? `<div style=\"margin-top:14px;padding:10px 12px;background:#fff4e5;border-left:3px solid #f0a020;font:14px Arial;color:#6b3d00\"><b>Not sorted yet (${missing.length}).</b> They stay in the queue for the next run:<br>${missing.map(m => esc(m.subject) + ' \u00b7 ' + esc(m.from)).join('<br>')}</div>` : ''}\n<h3 style=\"font:700 16px Arial;color:#0f1b2d;margin:20px 0 4px\">Needs you (${act.length})</h3>\n<table width=\"100%\" cellspacing=\"0\">${act.map(item).join('')}</table>\n<h3 style=\"font:700 16px Arial;color:#0f1b2d;margin:20px 0 4px\">Personal (${pers.length})</h3>\n<table width=\"100%\" cellspacing=\"0\">${pers.map(item).join('')}</table>\n<p style=\"font:12px Arial;color:#8a97a8;margin-top:20px\">Receipts, alerts, newsletters and promos are counted above. Nothing was sent to anyone; suggested replies are drafts for you.</p>\n</div>`;\nconst stamp = finished.replace(/[:.]/g, '-');\nconst record = { version: 2, started, finished, seconds, total: mails.length, sorted: rows.length, missing, counts: {\n  action_needed: act.length, personal: pers.length, receipt: count('receipt'), notification: count('notification'),\n  newsletter: count('newsletter'), promo: count('promo') }, batches: prep.length, rows };\nreturn [{\n  json: { subject: `Inbox digest \u00b7 ${rows.length} emails, ${act.length} need you`, html, seconds, stamp,\n          sortedIds: rows.map(r => r.id) },\n  binary: { data: { data: Buffer.from(JSON.stringify(record, null, 1)).toString('base64'),\n                    mimeType: 'application/json', fileName: `run-${stamp}.json`, fileExtension: 'json' } },\n}];"
+   },
+   "name": "Build digest",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1000,
+    120
+   ],
+   "id": "build-digest"
+  },
+  {
+   "parameters": {
+    "fromEmail": "Inbox Agent <you@gmail.com>",
+    "toEmail": "you@gmail.com",
+    "subject": "={{ $json.subject }}",
+    "emailFormat": "html",
+    "html": "={{ $json.html }}",
+    "options": {}
+   },
+   "name": "Send digest",
+   "type": "n8n-nodes-base.emailSend",
+   "typeVersion": 2.1,
+   "position": [
+    1240,
+    40
+   ],
+   "id": "send-digest",
+   "credentials": {
+    "smtp": {
+     "id": "",
+     "name": "Studio Gmail SMTP"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "// Only rows that made it into the sent digest leave the queue.\nreturn $('Build digest').first().json.sortedIds.map(id => ({ json: { id } }));"
+   },
+   "name": "Sorted rows",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1480,
+    40
+   ],
+   "id": "sorted-rows"
+  },
+  {
+   "parameters": {
+    "resource": "row",
+    "operation": "deleteRows",
+    "dataTableId": {
+     "__rl": true,
+     "mode": "name",
+     "value": "inbox_queue"
+    },
+    "matchType": "anyCondition",
+    "filters": {
+     "conditions": [
+      {
+       "keyName": "id",
+       "condition": "eq",
+       "keyValue": "={{ $json.id }}"
+      }
+     ]
+    },
+    "options": {}
+   },
+   "name": "Clear from queue",
+   "type": "n8n-nodes-base.dataTable",
+   "typeVersion": 1.1,
+   "position": [
+    1720,
+    40
+   ],
+   "id": "clear-from-queue"
+  }
+ ],
+ "connections": {
+  "Run now": {
+   "main": [
+    [
+     {
+      "node": "Read queue",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Every day 08:00": {
+   "main": [
+    [
+     {
+      "node": "Read queue",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read queue": {
+   "main": [
+    [
+     {
+      "node": "Prepare batches",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepare batches": {
+   "main": [
+    [
+     {
+      "node": "Loop over batches",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Loop over batches": {
+   "main": [
+    [
+     {
+      "node": "Build digest",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Sort & summarise",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sort & summarise": {
+   "main": [
+    [
+     {
+      "node": "Pace for free tier",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pace for free tier": {
+   "main": [
+    [
+     {
+      "node": "Loop over batches",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini": {
+   "ai_languageModel": [
+    [
+     {
+      "node": "Sort & summarise",
+      "type": "ai_languageModel",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Output format": {
+   "ai_outputParser": [
+    [
+     {
+      "node": "Sort & summarise",
+      "type": "ai_outputParser",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build digest": {
+   "main": [
+    [
+     {
+      "node": "Send digest",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Send digest": {
+   "main": [
+    [
+     {
+      "node": "Sorted rows",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sorted rows": {
+   "main": [
+    [
+     {
+      "node": "Clear from queue",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ }
+}

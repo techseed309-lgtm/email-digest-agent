@@ -1,0 +1,96 @@
+{
+ "name": "Inbox Agent \u00b7 1 Collect",
+ "active": false,
+ "settings": {
+  "executionOrder": "v1"
+ },
+ "nodes": [
+  {
+   "parameters": {
+    "mailbox": "INBOX",
+    "postProcessAction": "read",
+    "format": "simple",
+    "options": {
+     "customEmailConfig": "[\"UNSEEN\"]"
+    }
+   },
+   "name": "Email Trigger (IMAP)",
+   "type": "n8n-nodes-base.emailReadImap",
+   "typeVersion": 2.2,
+   "position": [
+    0,
+    300
+   ],
+   "id": "email-trigger-(imap)",
+   "credentials": {
+    "imap": {
+     "id": "",
+     "name": "Studio Gmail IMAP"
+    }
+   }
+  },
+  {
+   "parameters": {
+    "jsCode": "// SETTINGS: edit these two lines.\nconst MY_ADDRESS = 'you@gmail.com'; // your Gmail address (the agent skips its own digest emails)\nconst DEMO_MODE = true; // true = only the demo inbox (.example senders) goes to the AI. Set false for your\n                        // own mail, and use Gemini's PAID tier for real mail (free-tier inputs may be used\n                        // to improve Google's products).\n// Keep what the sorter needs. DEMO MODE: only the seeded demo senders (.example addresses) go further, so no\n// real mail is ever sent to the model; the agent's own digests are skipped too (n8n's IMAP search has no NOT).\nconst addr = v => typeof v === 'string' ? v : (v?.text || v?.value?.[0]?.address || '');\nconst isDemo = s => /@[^>\\s]+\\.example>?\\s*$/i.test(s.trim());\nreturn $input.all()\n  .filter(it => (!DEMO_MODE || isDemo(addr(it.json.from))) && !addr(it.json.from).includes(MY_ADDRESS))\n  .map(it => {\n    const j = it.json;\n    const body = String(j.textPlain || j.text || j.textHtml || '').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 700);\n    return { json: { sender: addr(j.from), subject: j.subject || '', received: String(j.date || ''), body } };\n  });"
+   },
+   "name": "Clean email",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    240,
+    300
+   ],
+   "id": "clean-email"
+  },
+  {
+   "parameters": {
+    "resource": "row",
+    "operation": "insert",
+    "dataTableId": {
+     "__rl": true,
+     "mode": "name",
+     "value": "inbox_queue"
+    },
+    "columns": {
+     "mappingMode": "autoMapInputData",
+     "value": {},
+     "matchingColumns": [],
+     "schema": []
+    },
+    "options": {}
+   },
+   "name": "Add to queue",
+   "type": "n8n-nodes-base.dataTable",
+   "typeVersion": 1.1,
+   "position": [
+    480,
+    300
+   ],
+   "id": "add-to-queue"
+  }
+ ],
+ "connections": {
+  "Email Trigger (IMAP)": {
+   "main": [
+    [
+     {
+      "node": "Clean email",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Clean email": {
+   "main": [
+    [
+     {
+      "node": "Add to queue",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ }
+}
